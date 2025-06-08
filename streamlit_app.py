@@ -37,6 +37,9 @@ LABELS = [
 # Special option for when no labels apply
 NONE_OPTION = "None of the above labels can apply"
 
+# Supported image extensions
+IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
+
 # Initialize session state
 if 'current_image_index' not in st.session_state:
     st.session_state.current_image_index = 0
@@ -50,6 +53,13 @@ class DataLoader:
     
     def __init__(self, data_dir):
         self.data_dir = data_dir
+        # Define possible image directories
+        self.image_directories = [
+            os.path.join(data_dir, "images"),
+            os.path.join(data_dir),
+            os.path.join(SCRIPT_DIR, "images"),
+            SCRIPT_DIR
+        ]
     
     def load_csv(self, filename):
         """Load CSV file from data directory"""
@@ -68,24 +78,58 @@ class DataLoader:
             st.error(f"❌ Error loading {filename}: {str(e)}")
             return None
     
-    def get_image_path(self, image_filename):
-        """Get full path to image file"""
-        if pd.isna(image_filename) or not image_filename:
+    def find_image_by_post_id(self, post_id):
+        """Find image file by post_id with various extensions"""
+        if pd.isna(post_id) or not post_id:
             return None
         
-        # Try different possible locations for images
-        possible_paths = [
-            os.path.join(self.data_dir, str(image_filename)),
-            os.path.join(self.data_dir, "images", str(image_filename)),
-            os.path.join(SCRIPT_DIR, "images", str(image_filename)),
-            os.path.join(SCRIPT_DIR, str(image_filename))
-        ]
+        # Convert post_id to string and clean it
+        post_id_str = str(post_id).strip()
         
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
+        # Try each image directory
+        for img_dir in self.image_directories:
+            if not os.path.exists(img_dir):
+                continue
+                
+            # Try each extension
+            for ext in IMAGE_EXTENSIONS:
+                # Try both with and without extension (in case post_id already includes extension)
+                possible_filenames = [
+                    f"{post_id_str}{ext}",
+                    f"{post_id_str.lower()}{ext}",
+                    f"{post_id_str.upper()}{ext}"
+                ]
+                
+                # If post_id already has an extension, also try it as-is
+                if '.' in post_id_str:
+                    possible_filenames.append(post_id_str)
+                
+                for filename in possible_filenames:
+                    full_path = os.path.join(img_dir, filename)
+                    if os.path.exists(full_path):
+                        return full_path
         
         return None
+    
+    def get_available_images_info(self):
+        """Get information about available images in all directories"""
+        available_images = {}
+        
+        for img_dir in self.image_directories:
+            if not os.path.exists(img_dir):
+                continue
+                
+            dir_name = os.path.basename(img_dir) if os.path.basename(img_dir) else "root"
+            available_images[dir_name] = []
+            
+            try:
+                for file in os.listdir(img_dir):
+                    if any(file.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                        available_images[dir_name].append(file)
+            except PermissionError:
+                available_images[dir_name] = ["Permission denied"]
+        
+        return available_images
 
 @st.cache_data
 def load_images_data():
@@ -93,77 +137,76 @@ def load_images_data():
     loader = DataLoader(DATA_DIR)
     return loader.load_csv('post_img.csv')
 
-def display_image_with_proper_path(current_row, loader):
-    """Display image with proper path handling"""
+def display_image_with_post_id(current_row, loader):
+    """Display image using post_id to find local image file"""
+    
+    # Check if post_id column exists
+    if 'post_id' not in current_row.index:
+        st.error("❌ 'post_id' column not found in the CSV file")
+        with st.expander("🔍 Available Columns"):
+            st.write(list(current_row.index))
+        return False
+    
+    post_id = current_row['post_id']
     
     # Debug info
-    with st.expander("🔍 Debug: Available Columns"):
-        st.write("**All columns in CSV:**")
-        st.write(list(current_row.index))
+    with st.expander("🔍 Debug Info"):
+        st.write(f"**Post ID:** {post_id}")
+        st.write(f"**Post ID Type:** {type(post_id)}")
         
-        # Show first row of data
-        st.write("**Current row data:**")
-        for col in current_row.index:
-            st.write(f"• **{col}**: {current_row[col]}")
-    
-    # Look for image columns more broadly
-    image_columns = []
-    for col in current_row.index:
-        col_lower = col.lower()
-        if any(keyword in col_lower for keyword in ['image', 'img', 'url', 'path', 'screenshot', 'pic', 'photo', 'src', 'file']):
-            image_columns.append(col)
-    
-    if image_columns:
-        st.write(f"**Detected potential image columns:** {image_columns}")
-        
-        for col in image_columns:
-            image_identifier = current_row[col]
-            
-            if pd.isna(image_identifier):
-                st.warning(f"⚠️ {col} is empty for this row")
-                continue
-                
-            # Handle different types of image identifiers
-            image_identifier_str = str(image_identifier).strip()
-            
-            if image_identifier_str.startswith(('http://', 'https://')):
-                # It's a URL
-                try:
-                    st.image(image_identifier_str, 
-                            caption=f"Image from {col}", 
-                            use_column_width=True)
-                    return True
-                except Exception as e:
-                    st.error(f"❌ Failed to load image from URL: {e}")
-                    st.code(f"URL: {image_identifier_str}")
+        # Show available images
+        available_images = loader.get_available_images_info()
+        st.write("**Available images in directories:**")
+        for dir_name, files in available_images.items():
+            if files:
+                st.write(f"• **{dir_name}**: {len(files)} files")
+                with st.expander(f"Files in {dir_name}"):
+                    for file in files[:10]:  # Show first 10 files
+                        st.code(file)
+                    if len(files) > 10:
+                        st.write(f"... and {len(files) - 10} more files")
             else:
-                # It's likely a filename or path
-                image_path = loader.get_image_path(image_identifier_str)
-                
-                if image_path:
-                    try:
-                        st.image(image_path, 
-                                caption=f"Image: {os.path.basename(image_path)}", 
-                                use_column_width=True)
-                        return True
-                    except Exception as e:
-                        st.error(f"❌ Failed to load image: {e}")
-                        st.code(f"Path: {image_path}")
-                else:
-                    st.warning(f"⚠️ Image file not found: {image_identifier_str}")
-                    st.info("💡 Searched in:")
-                    search_paths = [
-                        os.path.join(DATA_DIR, image_identifier_str),
-                        os.path.join(DATA_DIR, "images", image_identifier_str),
-                        os.path.join(SCRIPT_DIR, "images", image_identifier_str),
-                        os.path.join(SCRIPT_DIR, image_identifier_str)
-                    ]
-                    for path in search_paths:
-                        st.code(path)
-    else:
-        st.info("💡 No image columns detected. Looking for columns containing: image, img, url, path, screenshot, pic, photo, src, file")
+                st.write(f"• **{dir_name}**: No image files found")
     
-    return False
+    # Try to find and display the image
+    image_path = loader.find_image_by_post_id(post_id)
+    
+    if image_path:
+        try:
+            st.image(image_path, 
+                    caption=f"Image: {os.path.basename(image_path)} (Post ID: {post_id})", 
+                    use_column_width=True)
+            st.success(f"✅ Found image at: {image_path}")
+            return True
+        except Exception as e:
+            st.error(f"❌ Failed to load image: {e}")
+            st.code(f"Path: {image_path}")
+            return False
+    else:
+        st.warning(f"⚠️ No image found for post_id: {post_id}")
+        st.info("💡 Searched for files with these patterns:")
+        
+        # Show what was searched for
+        post_id_str = str(post_id).strip()
+        search_patterns = []
+        for ext in IMAGE_EXTENSIONS:
+            search_patterns.extend([
+                f"{post_id_str}{ext}",
+                f"{post_id_str.lower()}{ext}",
+                f"{post_id_str.upper()}{ext}"
+            ])
+        
+        # Show first few patterns
+        for pattern in search_patterns[:6]:
+            st.code(pattern)
+        if len(search_patterns) > 6:
+            st.write(f"... and {len(search_patterns) - 6} more patterns")
+        
+        st.info("💡 Searched in directories:")
+        for img_dir in loader.image_directories:
+            st.code(img_dir)
+        
+        return False
 
 def save_annotations_to_json():
     """Save annotations to JSON format for export"""
@@ -214,6 +257,21 @@ def main():
                 st.write(f"• {file}")
         else:
             st.warning(f"⚠️ Data directory does not exist: {DATA_DIR}")
+        
+        # Show image directories and their contents
+        loader = DataLoader(DATA_DIR)
+        st.write(f"**Image directories being searched:**")
+        for img_dir in loader.image_directories:
+            exists = os.path.exists(img_dir)
+            st.write(f"• {img_dir} {'✅' if exists else '❌'}")
+            
+            if exists:
+                try:
+                    image_files = [f for f in os.listdir(img_dir) 
+                                 if any(f.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)]
+                    st.write(f"  └─ {len(image_files)} image files found")
+                except PermissionError:
+                    st.write(f"  └─ Permission denied")
     
     # Load image data
     if st.session_state.images_data is None:
@@ -243,11 +301,12 @@ def main():
         
         st.subheader("Current Image")
         
-        # Display image with proper path handling
-        image_displayed = display_image_with_proper_path(current_row, loader)
+        # Display image using post_id
+        image_displayed = display_image_with_post_id(current_row, loader)
         
         if not image_displayed:
-            st.warning("⚠️ No image could be displayed for this row")
+            st.error("❌ No image could be displayed for this row")
+            st.info("💡 Make sure the image file exists in one of the image directories with the correct post_id as filename")
         
         # Display other information
         st.write("**Additional Information:**")
@@ -363,7 +422,7 @@ def main():
         else:
             st.button("💾 Download Annotations", disabled=True, help="No annotations to export yet")
     
-    # Rest of your code remains the same...
+    # Statistics and summary
     st.markdown("---")
     st.subheader("📊 Annotation Summary")
     
@@ -391,7 +450,7 @@ with st.sidebar:
     st.markdown("""
     ### How to use this tool:
     
-    1. **View Image**: Each page shows one image, please read the image carefully.
+    1. **View Image**: Each page shows one image loaded from local directory using post_id as filename
     
     2. **Select Labels**: Choose 1-3 labels from the 10 available options which can best describe the image content, OR select "None of the above labels can apply" if no labels fit
     
@@ -399,14 +458,16 @@ with st.sidebar:
     
     4. **Export**: Download your annotations as a JSON file when done
     
+    ### Image Loading:
+    - Images are loaded using **post_id** as filename
+    - Supported formats: **jpg, jpeg, png, gif, bmp, webp, tiff, tif**
+    - Searches in: data/images/, data/, images/, script directory
+    
     ### Available Labels:
     """)
     
     for i, label in enumerate(LABELS, 1):
         st.write(f"{i}. {label}")
-    
-    st.markdown("---")
-    st.info("💡 Your progress is automatically saved when you export!")
-
+        
 if __name__ == "__main__":
     main()
