@@ -143,13 +143,13 @@ def display_image_with_post_id(current_row, loader):
     # Check if post_id column exists
     if 'post_id' not in current_row.index:
         st.error("❌ 'post_id' column not found in the CSV file")
-        with st.expander("🔍 Available Columns"):
-            st.write(list(current_row.index))
+        st.write("**Available Columns:**")
+        st.write(list(current_row.index))
         return False
     
     post_id = current_row['post_id']
     
-    # Debug info
+    # Debug info - using a single expander without nesting
     with st.expander("🔍 Debug Info"):
         st.write(f"**Post ID:** {post_id}")
         st.write(f"**Post ID Type:** {type(post_id)}")
@@ -160,11 +160,12 @@ def display_image_with_post_id(current_row, loader):
         for dir_name, files in available_images.items():
             if files:
                 st.write(f"• **{dir_name}**: {len(files)} files")
-                with st.expander(f"Files in {dir_name}"):
-                    for file in files[:10]:  # Show first 10 files
-                        st.code(file)
-                    if len(files) > 10:
-                        st.write(f"... and {len(files) - 10} more files")
+                # Show files directly without nested expander
+                st.write("  **Sample files:**")
+                for file in files[:5]:  # Show first 5 files
+                    st.write(f"    - {file}")
+                if len(files) > 5:
+                    st.write(f"    ... and {len(files) - 5} more files")
             else:
                 st.write(f"• **{dir_name}**: No image files found")
     
@@ -468,6 +469,9 @@ with st.sidebar:
     
     for i, label in enumerate(LABELS, 1):
         st.write(f"{i}. {label}")
-        
+    
+    st.markdown("---")
+    st.info("💡 Your progress is automatically saved when you export!")
+
 if __name__ == "__main__":
     main()
