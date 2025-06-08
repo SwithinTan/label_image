@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import json
-from datetime import datetime
 import os
+from datetime import datetime
+from pathlib import Path
 
 # Page configuration
 st.set_page_config(
@@ -10,6 +11,14 @@ st.set_page_config(
     page_icon="🏷️",
     layout="wide"
 )
+
+# Set paths relative to the script location (following the pattern from app.py)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")  # Adjust this path as needed
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "annotations")
+
+# Create output directory if it doesn't exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Define the 10 labels
 LABELS = [
@@ -36,18 +45,125 @@ if 'annotations' not in st.session_state:
 if 'images_data' not in st.session_state:
     st.session_state.images_data = None
 
+class DataLoader:
+    """Data loader class following the pattern from app.py"""
+    
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+    
+    def load_csv(self, filename):
+        """Load CSV file from data directory"""
+        file_path = os.path.join(self.data_dir, filename)
+        try:
+            if not os.path.exists(file_path):
+                st.error(f"❌ File not found: {file_path}")
+                st.info(f"💡 Please make sure '{filename}' exists in the data directory: {self.data_dir}")
+                return None
+            
+            df = pd.read_csv(file_path)
+            st.success(f"✅ Successfully loaded {len(df)} rows from {filename}")
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Error loading {filename}: {str(e)}")
+            return None
+    
+    def get_image_path(self, image_filename):
+        """Get full path to image file"""
+        if pd.isna(image_filename) or not image_filename:
+            return None
+        
+        # Try different possible locations for images
+        possible_paths = [
+            os.path.join(self.data_dir, str(image_filename)),
+            os.path.join(self.data_dir, "images", str(image_filename)),
+            os.path.join(SCRIPT_DIR, "images", str(image_filename)),
+            os.path.join(SCRIPT_DIR, str(image_filename))
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                return path
+        
+        return None
+
 @st.cache_data
 def load_images_data():
-    """Load image data from CSV file"""
-    try:
-        df = pd.read_csv('post_img.csv')
-        return df
-    except FileNotFoundError:
-        st.error("❌ post_img.csv file not found. Please make sure the file exists in the same directory as this app.")
-        return None
-    except Exception as e:
-        st.error(f"❌ Error loading post_img.csv: {str(e)}")
-        return None
+    """Load image data using the improved DataLoader"""
+    loader = DataLoader(DATA_DIR)
+    return loader.load_csv('post_img.csv')
+
+def display_image_with_proper_path(current_row, loader):
+    """Display image with proper path handling"""
+    
+    # Debug info
+    with st.expander("🔍 Debug: Available Columns"):
+        st.write("**All columns in CSV:**")
+        st.write(list(current_row.index))
+        
+        # Show first row of data
+        st.write("**Current row data:**")
+        for col in current_row.index:
+            st.write(f"• **{col}**: {current_row[col]}")
+    
+    # Look for image columns more broadly
+    image_columns = []
+    for col in current_row.index:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['image', 'img', 'url', 'path', 'screenshot', 'pic', 'photo', 'src', 'file']):
+            image_columns.append(col)
+    
+    if image_columns:
+        st.write(f"**Detected potential image columns:** {image_columns}")
+        
+        for col in image_columns:
+            image_identifier = current_row[col]
+            
+            if pd.isna(image_identifier):
+                st.warning(f"⚠️ {col} is empty for this row")
+                continue
+                
+            # Handle different types of image identifiers
+            image_identifier_str = str(image_identifier).strip()
+            
+            if image_identifier_str.startswith(('http://', 'https://')):
+                # It's a URL
+                try:
+                    st.image(image_identifier_str, 
+                            caption=f"Image from {col}", 
+                            use_column_width=True)
+                    return True
+                except Exception as e:
+                    st.error(f"❌ Failed to load image from URL: {e}")
+                    st.code(f"URL: {image_identifier_str}")
+            else:
+                # It's likely a filename or path
+                image_path = loader.get_image_path(image_identifier_str)
+                
+                if image_path:
+                    try:
+                        st.image(image_path, 
+                                caption=f"Image: {os.path.basename(image_path)}", 
+                                use_column_width=True)
+                        return True
+                    except Exception as e:
+                        st.error(f"❌ Failed to load image: {e}")
+                        st.code(f"Path: {image_path}")
+                else:
+                    st.warning(f"⚠️ Image file not found: {image_identifier_str}")
+                    st.info("💡 Searched in:")
+                    search_paths = [
+                        os.path.join(DATA_DIR, image_identifier_str),
+                        os.path.join(DATA_DIR, "images", image_identifier_str),
+                        os.path.join(SCRIPT_DIR, "images", image_identifier_str),
+                        os.path.join(SCRIPT_DIR, image_identifier_str)
+                    ]
+                    for path in search_paths:
+                        st.code(path)
+    else:
+        st.info("💡 No image columns detected. Looking for columns containing: image, img, url, path, screenshot, pic, photo, src, file")
+    
+    return False
 
 def save_annotations_to_json():
     """Save annotations to JSON format for export"""
@@ -85,6 +201,20 @@ def main():
     st.title("🏷️ Image Annotation Tool")
     st.markdown("---")
     
+    # Display current directories for debugging
+    with st.expander("📁 File System Info"):
+        st.write(f"**Script directory:** {SCRIPT_DIR}")
+        st.write(f"**Data directory:** {DATA_DIR}")
+        st.write(f"**Output directory:** {OUTPUT_DIR}")
+        
+        # List files in data directory
+        if os.path.exists(DATA_DIR):
+            st.write(f"**Files in data directory:**")
+            for file in os.listdir(DATA_DIR):
+                st.write(f"• {file}")
+        else:
+            st.warning(f"⚠️ Data directory does not exist: {DATA_DIR}")
+    
     # Load image data
     if st.session_state.images_data is None:
         st.session_state.images_data = load_images_data()
@@ -109,31 +239,22 @@ def main():
     with col1:
         # Display current image
         current_row = st.session_state.images_data.iloc[st.session_state.current_image_index]
+        loader = DataLoader(DATA_DIR)
         
         st.subheader("Current Image")
         
-        # Display only specific image information from CSV
-        st.write("**Image Information:**")
-        display_columns = ['post_id', 'title', 'link']
+        # Display image with proper path handling
+        image_displayed = display_image_with_proper_path(current_row, loader)
         
+        if not image_displayed:
+            st.warning("⚠️ No image could be displayed for this row")
+        
+        # Display other information
+        st.write("**Additional Information:**")
+        display_columns = ['post_id', 'title', 'link']
         for column in display_columns:
             if column in current_row.index:
                 st.write(f"• **{column}**: {current_row[column]}")
-            else:
-                st.write(f"• **{column}**: Not found in data")
-        
-        # Try to display the actual image if there's an image path/URL column
-        image_columns = [col for col in current_row.index if 'image' in col.lower() or 'url' in col.lower() or 'path' in col.lower()]
-        
-        if image_columns:
-            image_path = current_row[image_columns[0]]
-            try:
-                st.image(image_path, caption=f"Image {st.session_state.current_image_index + 1}")
-            except Exception as e:
-                st.warning(f"⚠️ Could not display image from path: {image_path}")
-                st.info("💡 The image path/URL might be invalid or the image might not be accessible.")
-        else:
-            st.info("💡 No image column detected in CSV. Showing data only.")
     
     with col2:
         st.subheader("🏷️ Select Labels")
@@ -150,9 +271,7 @@ def main():
         # Create checkboxes for each label
         selected_labels = []
         for i, label in enumerate(LABELS):
-            # Use unique key for each image and label combination to prevent persistence
             checkbox_key = f"label_{label}_{st.session_state.current_image_index}"
-            # Disable if "None" is selected
             disabled = none_selected
             if st.checkbox(label, value=(label in current_annotations and not none_selected), key=checkbox_key, disabled=disabled):
                 selected_labels.append(label)
@@ -162,7 +281,6 @@ def main():
         
         # "None of the above" option
         none_checkbox_key = f"none_option_{st.session_state.current_image_index}"
-        # Disable if any labels are selected
         none_disabled = len(selected_labels) > 0
         none_checked = st.checkbox(NONE_OPTION, value=none_selected, key=none_checkbox_key, disabled=none_disabled)
         
@@ -199,6 +317,7 @@ def main():
         
         st.markdown("---")
         
+        # Navigation
         col_nav1, col_nav2 = st.columns(2)
         with col_nav1:
             prev_disabled = (st.session_state.current_image_index == 0) or not selection_valid
@@ -227,20 +346,24 @@ def main():
         
         st.markdown("---")
         
-        # Export annotations in right column
-        st.subheader("Please export occasionally to save! Don't refresh!")
+        # Export annotations
+        st.subheader("💾 Export Annotations")
         if st.session_state.annotations:
             annotations_json = save_annotations_to_json()
+            filename = f"image_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = os.path.join(OUTPUT_DIR, filename)
+            
             st.download_button(
-                label="💾 Export Annotations",
+                label="💾 Download Annotations",
                 data=annotations_json,
-                file_name=f"image_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                file_name=filename,
                 mime="application/json",
                 help="Download your annotations as a JSON file"
             )
         else:
-            st.button("💾 Export Annotations", disabled=True, help="No annotations to export yet")
+            st.button("💾 Download Annotations", disabled=True, help="No annotations to export yet")
     
+    # Rest of your code remains the same...
     st.markdown("---")
     st.subheader("📊 Annotation Summary")
     
@@ -259,7 +382,7 @@ def main():
     if st.session_state.annotations:
         with st.expander("📋 View All Annotations"):
             for img_idx, labels in st.session_state.annotations.items():
-                if labels:  # Only show images with labels
+                if labels:
                     st.write(f"**Image {int(img_idx) + 1}**: {', '.join(labels)}")
 
 # Instructions sidebar
@@ -283,7 +406,7 @@ with st.sidebar:
         st.write(f"{i}. {label}")
     
     st.markdown("---")
-    st.info("💡 Your progress will NOT be saved! Please export occasionally!!")
+    st.info("💡 Your progress is automatically saved when you export!")
 
 if __name__ == "__main__":
     main()
