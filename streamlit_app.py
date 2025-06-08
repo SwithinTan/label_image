@@ -67,11 +67,9 @@ class DataLoader:
         try:
             if not os.path.exists(file_path):
                 st.error(f"❌ File not found: {file_path}")
-                st.info(f"💡 Please make sure '{filename}' exists in the data directory: {self.data_dir}")
                 return None
             
             df = pd.read_csv(file_path)
-            st.success(f"✅ Successfully loaded {len(df)} rows from {filename}")
             return df
             
         except Exception as e:
@@ -143,31 +141,9 @@ def display_image_with_post_id(current_row, loader):
     # Check if post_id column exists
     if 'post_id' not in current_row.index:
         st.error("❌ 'post_id' column not found in the CSV file")
-        st.write("**Available Columns:**")
-        st.write(list(current_row.index))
         return False
     
     post_id = current_row['post_id']
-    
-    # Debug info - using a single expander without nesting
-    with st.expander("🔍 Debug Info"):
-        st.write(f"**Post ID:** {post_id}")
-        st.write(f"**Post ID Type:** {type(post_id)}")
-        
-        # Show available images
-        available_images = loader.get_available_images_info()
-        st.write("**Available images in directories:**")
-        for dir_name, files in available_images.items():
-            if files:
-                st.write(f"• **{dir_name}**: {len(files)} files")
-                # Show files directly without nested expander
-                st.write("  **Sample files:**")
-                for file in files[:5]:  # Show first 5 files
-                    st.write(f"    - {file}")
-                if len(files) > 5:
-                    st.write(f"    ... and {len(files) - 5} more files")
-            else:
-                st.write(f"• **{dir_name}**: No image files found")
     
     # Try to find and display the image
     image_path = loader.find_image_by_post_id(post_id)
@@ -175,38 +151,15 @@ def display_image_with_post_id(current_row, loader):
     if image_path:
         try:
             st.image(image_path, 
-                    caption=f"Image: {os.path.basename(image_path)} (Post ID: {post_id})", 
-                    use_column_width=True)
-            st.success(f"✅ Found image at: {image_path}")
+                    caption=f"Post ID: {post_id}", 
+                    use_container_width=True)
             return True
         except Exception as e:
-            st.error(f"❌ Failed to load image: {e}")
-            st.code(f"Path: {image_path}")
+            st.error(f"❌ Failed to load image for Post ID: {post_id}")
             return False
     else:
-        st.warning(f"⚠️ No image found for post_id: {post_id}")
-        st.info("💡 Searched for files with these patterns:")
-        
-        # Show what was searched for
-        post_id_str = str(post_id).strip()
-        search_patterns = []
-        for ext in IMAGE_EXTENSIONS:
-            search_patterns.extend([
-                f"{post_id_str}{ext}",
-                f"{post_id_str.lower()}{ext}",
-                f"{post_id_str.upper()}{ext}"
-            ])
-        
-        # Show first few patterns
-        for pattern in search_patterns[:6]:
-            st.code(pattern)
-        if len(search_patterns) > 6:
-            st.write(f"... and {len(search_patterns) - 6} more patterns")
-        
-        st.info("💡 Searched in directories:")
-        for img_dir in loader.image_directories:
-            st.code(img_dir)
-        
+        st.error(f"❌ No image found for Post ID: {post_id}")
+        st.info("💡 Please ensure the image file exists in the images directory")
         return False
 
 def save_annotations_to_json():
@@ -245,38 +198,10 @@ def main():
     st.title("🏷️ Image Annotation Tool")
     st.markdown("---")
     
-    # Display current directories for debugging
-    with st.expander("📁 File System Info"):
-        st.write(f"**Script directory:** {SCRIPT_DIR}")
-        st.write(f"**Data directory:** {DATA_DIR}")
-        st.write(f"**Output directory:** {OUTPUT_DIR}")
-        
-        # List files in data directory
-        if os.path.exists(DATA_DIR):
-            st.write(f"**Files in data directory:**")
-            for file in os.listdir(DATA_DIR):
-                st.write(f"• {file}")
-        else:
-            st.warning(f"⚠️ Data directory does not exist: {DATA_DIR}")
-        
-        # Show image directories and their contents
-        loader = DataLoader(DATA_DIR)
-        st.write(f"**Image directories being searched:**")
-        for img_dir in loader.image_directories:
-            exists = os.path.exists(img_dir)
-            st.write(f"• {img_dir} {'✅' if exists else '❌'}")
-            
-            if exists:
-                try:
-                    image_files = [f for f in os.listdir(img_dir) 
-                                 if any(f.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)]
-                    st.write(f"  └─ {len(image_files)} image files found")
-                except PermissionError:
-                    st.write(f"  └─ Permission denied")
-    
     # Load image data
     if st.session_state.images_data is None:
-        st.session_state.images_data = load_images_data()
+        with st.spinner("Loading image data..."):
+            st.session_state.images_data = load_images_data()
     
     if st.session_state.images_data is None:
         st.stop()
@@ -307,7 +232,6 @@ def main():
         
         if not image_displayed:
             st.error("❌ No image could be displayed for this row")
-            st.info("💡 Make sure the image file exists in one of the image directories with the correct post_id as filename")
         
         # Display other information
         st.write("**Additional Information:**")
@@ -471,7 +395,7 @@ with st.sidebar:
         st.write(f"{i}. {label}")
     
     st.markdown("---")
-    st.info("💡 Your progress is automatically saved when you export!")
+    st.info("💡 Your progress is will NOT be saved, please export!")
 
 if __name__ == "__main__":
     main()
