@@ -194,6 +194,13 @@ def save_annotations_to_json():
     
     return json.dumps(annotations_export, indent=2, ensure_ascii=False)
 
+def check_current_selection_valid():
+    """Check if current selection is valid (has at least one option selected)"""
+    current_annotations = st.session_state.annotations.get(
+        str(st.session_state.current_image_index), []
+    )
+    return len(current_annotations) > 0
+
 def main():
     st.title("🏷️ Image Annotation Tool")
     st.markdown("---")
@@ -301,7 +308,7 @@ def main():
         
         st.markdown("---")
         
-        # Navigation
+        # Navigation - Modified to allow Previous/Next only with valid selection
         col_nav1, col_nav2 = st.columns(2)
         with col_nav1:
             prev_disabled = (st.session_state.current_image_index == 0) or not selection_valid
@@ -315,16 +322,20 @@ def main():
                 st.session_state.current_image_index += 1
                 st.rerun()
         
-        # Jump to specific image
+        # Jump to specific image - Modified to allow jumping without requiring current answer
+        st.markdown("---")
+        st.write("**🎯 Jump to Specific Question:**")
         target_image = st.number_input(
-            "Go to image:", 
+            "Question number:", 
             min_value=1, 
             max_value=total_images, 
             value=st.session_state.current_image_index + 1,
-            key=f"nav_input_{st.session_state.current_image_index}"
+            key=f"nav_input_{st.session_state.current_image_index}",
+            help="You can jump to any question without answering the current one"
         )
-        go_disabled = not selection_valid
-        if st.button("🎯 Go", disabled=go_disabled):
+        
+        # Remove the validation requirement for jumping
+        if st.button("🎯 Go to Question", key="jump_button"):
             st.session_state.current_image_index = target_image - 1
             st.rerun()
         
@@ -379,9 +390,15 @@ with st.sidebar:
     
     2. **Select Labels**: Choose 1-3 labels from the 10 available options which can best describe the image content, OR select "None of the above labels can apply" if no labels fit
     
-    3. **Navigate**: Use Previous/Next buttons or jump to specific images (disabled until you make a selection)
+    3. **Navigate**: 
+       - Use Previous/Next buttons (requires answering current question)
+       - **Jump to any question** using the question number input (no answer required)
     
     4. **Export**: Download your annotations as a JSON file when done
+    
+    ### Navigation Options:
+    - **Previous/Next**: Requires answering the current question
+    - **Jump to Question**: Can jump to any question without answering current one
     
     ### Image Loading:
     - Images are loaded using **post_id** as filename
